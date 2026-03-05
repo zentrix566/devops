@@ -50,9 +50,13 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            # 这里的 deployment 名字需要和你服务器上运行的名字一致
-            # 强制 K3s 重新拉取最新的镜像并重启 Pod
+            script: |
+            # 1. 进入你的配置目录（假设你在服务器存了 yaml）
+            # 2. 直接 apply 最新的配置（确保 strategy: Recreate 生效）
+            # kubectl apply -f /root/deploy.yaml 
+            
+            # 3. 触发重启
             kubectl rollout restart deployment zentrix-lab
             
-            # 等待滚动更新完成，如果 60s 没跑通会报错提醒你
-            kubectl rollout status deployment zentrix-lab --timeout=60s
+            # 4. 检查状态（Recreate 模式下通常很快）
+            kubectl rollout status deployment zentrix-lab --timeout=90s
