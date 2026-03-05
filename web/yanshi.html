@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>我的云原生实验室</title>
+    <style>
+        body { margin: 0; font-family: sans-serif; background: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+        .card { text-align: center; padding: 3rem; border-radius: 1rem; background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
+        h1 { font-size: 3rem; background: linear-gradient(to right, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 1rem; }
+        .status { color: #10b981; font-weight: bold; border: 1px solid #10b981; padding: 0.5rem 1rem; border-radius: 2rem; display: inline-block; margin-top: 1rem; }
+        .deploy-info { margin-top: 2rem; font-size: 0.8rem; color: #64748b; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>CI/CD 部署成功</h1>
+        <p>这是一个打包在镜像内部的 Nginx 页面</p>
+        <div class="status">● 运行中 (Image Mode)</div>
+        <div class="deploy-info">由 GitHub Actions 自动构建发布</div>
+    </div>
+</body>
+</html>
