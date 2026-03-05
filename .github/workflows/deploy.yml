@@ -1,14 +1,20 @@
-name: Deploy to Server
+name: Build and Deploy
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Enable SSH deployment'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
-  build-and-deploy:
-    name: Build and Deploy
+  build:
+    name: Build Docker Image
     runs-on: ubuntu-latest
 
     steps:
@@ -31,12 +37,15 @@ jobs:
         with:
           name: docker-image
           path: /tmp/image.tar
+          retention-days: 7
 
   deploy:
     name: SSH Deploy
     runs-on: ubuntu-latest
-    needs: build-and-deploy
-    if: github.ref == 'refs/heads/main'
+    needs: build
+    if: |
+      github.ref == 'refs/heads/main' &&
+      (github.event.inputs.deploy == 'true' || github.event_name == 'push')
 
     steps:
       - name: Checkout code
@@ -48,24 +57,52 @@ jobs:
           name: docker-image
           path: /tmp
 
+      - name: Check SSH secrets
+        id: check-secrets
+        run: |
+          if [ -z "${{ secrets.SSH_HOST }}" ] || [ -z "${{ secrets.SSH_USER }}" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "::warning::SSH secrets not configured, skipping deployment"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Deploy to server via SSH
+        if: steps.check-secrets.outputs.skip != 'true'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
-          password: ${{ secrets.SSH_PASS }}
-          port: 22
+          key: ${{ secrets.SSH_KEY || '' }}
+          password: ${{ secrets.SSH_PASS || '' }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          timeout: 30s
+          command_timeout: 10m
           script: |
             echo "🚀 Starting deployment..."
 
-            # Load the Docker image
-            docker load -i /tmp/image.tar || true
+            # Create temp directory if needed
+            mkdir -p ~/deploy-tmp
+            cd ~/deploy-tmp
 
-            # Stop and remove old container
+            # Stop and remove old container if exists
             docker stop devops-nginx 2>/dev/null || true
             docker rm devops-nginx 2>/dev/null || true
 
+            # Build image directly on server (simpler than transferring)
+            echo "Building Docker image on server..."
+            docker build -t devops:latest - << 'EOF'
+            FROM nginx:alpine
+            RUN rm /etc/nginx/nginx.conf && rm -rf /usr/share/nginx/html/*
+            COPY nginx.conf /etc/nginx/nginx.conf
+            COPY index.html /usr/share/nginx/html/
+            COPY web/*.html /usr/share/nginx/html/
+            EXPOSE 80
+            CMD ["nginx", "-g", "daemon off;"]
+            EOF
+
             # Run new container
+            echo "Starting container..."
             docker run -d \
               --name devops-nginx \
               --restart=always \
@@ -74,6 +111,11 @@ jobs:
 
             # Verify deployment
             sleep 3
-            docker ps --filter name=devops-nginx
-
-            echo "✅ Deployment completed successfully!"
+            if docker ps --filter name=devops-nginx --format "{{.Names}}" | grep -q devops-nginx; then
+              echo "✅ Deployment completed successfully!"
+              docker ps --filter name=devops-nginx
+            else
+              echo "❌ Deployment failed - container not running"
+              docker logs devops-nginx 2>&1 || true
+              exit 1
+            fi
