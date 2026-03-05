@@ -6,15 +6,43 @@ on:
       - main
   workflow_dispatch:
 
+# 定义全局变量，方便后续维护
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
-  build:
-    name: Build
+  build-and-push:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
     steps:
-      - uses: actions/checkout@v4
+      # 1. 检出代码 (必须步骤，否则无法构建镜像)
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. 登录到 GitHub Container Registry
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 3. 构建镜像并推送到仓库
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
   deploy:
-    needs: build
+    needs: build-and-push
     runs-on: ubuntu-latest
     steps:
       - name: SSH Remote Deployment
@@ -23,13 +51,25 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          port: 22
+          port: ${{ secrets.SSH_PORT }}
           script: |
-            echo "🚀 Starting deployment..."
-            cd ~/devops
-            git pull
-            docker stop devops-nginx 2>/dev/null || true
-            docker rm devops-nginx 2>/dev/null || true
-            docker build -t devops:latest .
-            docker run -d --name devops-nginx --restart=always -p 80:80 devops:latest
-            echo "✅ Deployment completed!"
+            # 1. 登录 GHCR (如果服务器之前没登过)
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+
+            # 2. 拉取最新镜像
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+            # 3. 停止并移除旧容器 (这里的 my-app 可以换成你的容器名)
+            docker stop my-app || true
+            docker rm my-app || true
+
+            # 4. 运行新容器
+            # 请根据需要修改端口映射 (-p) 和环境变量
+            docker run -d \
+              --name my-app \
+              --restart always \
+              -p 80:80 \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+            # 5. 清理过时的镜像 (释放磁盘空间)
+            docker image prune -f
