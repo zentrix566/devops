@@ -1,12 +1,10 @@
-name: Build and Deploy
+name: Docker Build and Standard Deploy
 
 on:
   push:
-    branches:
-      - main
-  workflow_dispatch:
+    branches: [ "main" ]  # 只有 main 分支提交时触发
+  workflow_dispatch:      # 允许手动触发
 
-# 定义全局变量，方便后续维护
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -19,11 +17,10 @@ jobs:
       packages: write
 
     steps:
-      # 1. 检出代码 (必须步骤，否则无法构建镜像)
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. 登录到 GitHub Container Registry
+      # 1. 登录到 GitHub 镜像仓库 (GHCR)
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -31,20 +28,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. 构建镜像并推送到仓库
+      # 2. 构建镜像并推送到仓库
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          # 转换为小写镜像名，GitHub 用户名大写可能导致构建报错
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
+      # 3. 通过 SSH 登录服务器并通知 K3s 重启 Pod
       - name: SSH Remote Deployment
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -53,23 +50,9 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            # 1. 登录 GHCR (如果服务器之前没登过)
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
-
-            # 2. 拉取最新镜像
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-
-            # 3. 停止并移除旧容器 (这里的 my-app 可以换成你的容器名)
-            docker stop my-app || true
-            docker rm my-app || true
-
-            # 4. 运行新容器
-            # 请根据需要修改端口映射 (-p) 和环境变量
-            docker run -d \
-              --name my-app \
-              --restart always \
-              -p 80:80 \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-
-            # 5. 清理过时的镜像 (释放磁盘空间)
-            docker image prune -f
+            # 这里的 deployment 名字需要和你服务器上运行的名字一致
+            # 强制 K3s 重新拉取最新的镜像并重启 Pod
+            kubectl rollout restart deployment zentrix-lab
+            
+            # 等待滚动更新完成，如果 60s 没跑通会报错提醒你
+            kubectl rollout status deployment zentrix-lab --timeout=60s
