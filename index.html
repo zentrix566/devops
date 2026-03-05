@@ -3,278 +3,146 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zentrix Lab | 云原生实验室</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <title>Zentrix的云原生实验室</title>
     <style>
         :root {
-            --primary: #3b82f6;
-            --accent: #60a5fa;
-            --bg: #f8fafc;
-            --glass: rgba(255, 255, 255, 0.8);
-            --glass-hover: rgba(59, 130, 246, 0.1);
-            --border: rgba(0, 0, 0, 0.1);
+            --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --secondary-gradient: linear-gradient(135deg, #2af598 0%, #009efd 100%);
+            --bg-gradient: linear-gradient(120deg, #e0c3fc 0%, #8ec5fc 100%);
+            --card-bg: rgba(255, 255, 255, 0.9);
+            --text-main: #2d3748;
         }
-
-        * { margin: 0; padding: 0; box-sizing: border-box; cursor: crosshair; }
 
         body {
-            background-color: var(--bg);
-            color: #1e293b;
-            font-family: "JetBrains Mono", "Inter", "PingFang SC", monospace;
-            overflow: hidden;
-            height: 100vh;
-        }
-
-        #canvas-container {
-            position: fixed;
-            top: 0; left: 0;
-            z-index: 0;
-            filter: blur(1px);
-        }
-
-        .layout {
-            position: relative;
-            z-index: 10;
-            height: 100%;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg-gradient);
+            background-attachment: fixed;
+            margin: 0;
             display: flex;
             flex-direction: column;
+            align-items: center;
             justify-content: center;
-            align-items: center;
-            background: radial-gradient(circle at center, rgba(255,255,255,0.5) 0%, var(--bg) 90%);
-            padding: 20px;
+            min-height: 100vh; /* 改为 min-height 防止内容多时撑破容器 */
         }
 
-        /* 状态栏动画 */
-        .status-bar {
-            font-size: 0.7rem;
-            color: var(--primary);
-            text-transform: uppercase;
-            letter-spacing: 4px;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .status-dot {
-            width: 6px;
-            height: 6px;
-            background: var(--primary);
-            border-radius: 50%;
-            box-shadow: 0 0 10px var(--primary);
-            animation: breathe 2s infinite;
-        }
-
-        @keyframes breathe {
-            0%, 100% { opacity: 0.3; transform: scale(0.8); }
-            50% { opacity: 1; transform: scale(1.2); }
-        }
-
-        header {
+        .card {
+            background: var(--card-bg);
+            padding: 2.5rem;
+            border-radius: 24px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
             text-align: center;
-            margin-bottom: 50px;
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            width: 90%;
+            max-width: 500px; /* 限制最大宽度，保证每行两个看起来最舒服 */
         }
 
         h1 {
-            font-size: 3.5rem;
-            font-weight: 800;
-            letter-spacing: -2px;
-            background: linear-gradient(180deg, #1e293b 0%, #3b82f6 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            filter: drop-shadow(0 5px 15px rgba(0,0,0,0.1));
+            font-size: 1.8rem;
+            margin-bottom: 2rem;
+            color: var(--text-main);
         }
 
-        /* 按钮容器升级 */
-        .btn-group {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 12px;
-            width: 100%;
-            max-width: 540px;
+        /* --- 核心修改部分：自动换行布局 --- */
+        .nav-links {
+            display: flex;
+            flex-wrap: wrap;    /* 允许换行 */
+            gap: 15px;          /* 按钮之间的间距 */
+            justify-content: center;
         }
 
         .btn {
-            background: var(--glass);
-            border: 1px solid var(--border);
-            padding: 18px;
+            /* 关键：每个按钮占据 50% 减去 间距的一半 */
+            flex: 0 1 calc(50% - 8px); 
+            box-sizing: border-box;
+            padding: 15px 10px;
             text-decoration: none;
-            color: #475569;
+            color: white;
             border-radius: 12px;
-            backdrop-filter: blur(15px);
-            -webkit-backdrop-filter: blur(15px);
-            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            font-size: 0.85rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
-            position: relative;
+            font-weight: 600;
+            font-size: 0.95rem;
+            transition: all 0.2s ease;
+            text-align: center;
+            white-space: nowrap;
             overflow: hidden;
+            text-overflow: ellipsis;
         }
+        /* ------------------------------ */
 
-        /* 悬浮发光效果 */
+        .btn-primary { background: var(--primary-gradient); }
+        .btn-secondary { background: var(--secondary-gradient); }
+
         .btn:hover {
-            background: var(--glass-hover);
-            border-color: var(--accent);
-            color: #1e293b;
-            transform: translateY(-4px) scale(1.02);
-            box-shadow: 0 15px 30px rgba(0,0,0,0.1), 0 0 15px rgba(59, 130, 246, 0.2);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 15px rgba(0, 0, 0, 0.1);
+            filter: brightness(1.05);
         }
 
-        .btn:active { transform: scale(0.98); }
-
-        .btn-full { grid-column: span 2; font-weight: bold; border-color: rgba(59, 130, 246, 0.3); }
-
-        /* 科技时钟 */
-        .tech-clock {
-            position: absolute;
-            bottom: 70px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 6px;
+        /* 框外下方时钟 */
+        .clock-container {
+            margin-top: 30px;
+            text-align: center;
         }
 
-        .clock-time {
-            font-size: 1.8rem;
-            font-weight: 700;
-            letter-spacing: 6px;
-            color: var(--primary);
-            text-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
-            font-feature-settings: "tnum";
-            font-variant-numeric: tabular-nums;
+        #clock {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 3.5rem;
+            font-weight: 800;
+            color: #ffffff;
+            text-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1);
+            line-height: 1;
         }
 
-        .clock-date {
-            font-size: 0.7rem;
-            color: rgba(0, 0, 0, 0.4);
-            letter-spacing: 3px;
-            text-transform: uppercase;
-        }
-
-        .clock-separator {
-            animation: blink 1s infinite;
-        }
-
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
-        }
-
-        footer {
-            position: absolute;
-            bottom: 40px;
-            font-size: 0.65rem;
-            color: #94a3b8;
-            letter-spacing: 1px;
-        }
-
-        /* 移动端优化 */
-        @media (max-width: 480px) {
-            h1 { font-size: 2.5rem; }
-            .btn-group { grid-template-columns: 1fr; }
-            .btn-full { grid-column: span 1; }
+        .date-info {
+            font-size: 1.1rem;
+            margin-top: 10px;
+            color: #4a5568;
+            font-weight: 500;
         }
     </style>
 </head>
 <body>
 
-    <div id="canvas-container"></div>
-
-    <div class="layout">
-        <header>
-            <div class="status-bar">
-                <span class="status-dot"></span>
-                K3s Cluster Online
-            </div>
-            <h1>Zentrix Lab</h1>
-        </header>
-
-        <nav class="btn-group">
-            <a href="/yanshi" class="btn">演示页面</a>
-            <a href="/ceshi" class="btn">演示页面2</a>
-        </nav>
-
-        <div class="tech-clock">
-            <div class="clock-time" id="clock-time">00<span class="clock-separator">:</span>00<span class="clock-separator">:</span>00</div>
-            <div class="clock-date" id="clock-date">LOADING...</div>
+    <div class="card">
+        <h1>Zentrix的云原生实验室</h1>
+        <div class="nav-links">
+            <a href="/yanshi" class="btn btn-primary">演示页面</a>
+            <a href="/ceshi" class="btn btn-secondary">演示页面2</a>
+            <a href="/page3" class="btn btn-secondary">演示页面3</a>
+            <a href="/page4" class="btn btn-primary">添加页面4</a>
         </div>
+    </div>
 
-        <footer>
-            &copy; 2026 ZENTRIX LAB. DEPLOYED ON EDGE.
-        </footer>
+    <div class="clock-container">
+        <div id="clock">00:00:00</div>
+        <div id="date" class="date-info">正在同步时间...</div>
     </div>
 
     <script>
-        // --- 科技时钟 ---
-        function updateClock() {
-            const now = new Date();
-            const hours = String(now.getHours()).padStart(2, '0');
-            const minutes = String(now.getMinutes()).padStart(2, '0');
-            const seconds = String(now.getSeconds()).padStart(2, '0');
-            document.getElementById('clock-time').innerHTML = `${hours}<span class="clock-separator">:</span>${minutes}<span class="clock-separator">:</span>${seconds}`;
+        function startClock() {
+            const clockElement = document.getElementById('clock');
+            const dateElement = document.getElementById('date');
 
-            const weekDays = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
-            const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-            const dateStr = `${weekDays[now.getDay()]} ${months[now.getMonth()]} ${String(now.getDate()).padStart(2, '0')} ${now.getFullYear()}`;
-            document.getElementById('clock-date').textContent = dateStr;
+            function update() {
+                const now = new Date();
+                
+                const h = String(now.getHours()).padStart(2, '0');
+                const m = String(now.getMinutes()).padStart(2, '0');
+                const s = String(now.getSeconds()).padStart(2, '0');
+                clockElement.innerText = h + ":" + m + ":" + s;
+
+                const y = now.getFullYear();
+                const mo = now.getMonth() + 1;
+                const d = now.getDate();
+                const days = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+                dateElement.innerText = y + "年" + mo + "月" + d + "日 " + days[now.getDay()];
+            }
+
+            update();
+            setInterval(update, 1000);
         }
-        updateClock();
-        setInterval(updateClock, 1000);
-
-        // --- 优化的 Three.js 脚本 ---
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // 限制 DPR 提升性能
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.getElementById('canvas-container').appendChild(renderer.domElement);
-
-        const particlesGeometry = new THREE.BufferGeometry();
-        const count = 4000;
-        const posArray = new Float32Array(count * 3);
-
-        for(let i=0; i < count * 3; i++) {
-            posArray[i] = (Math.random() - 0.5) * 10;
-        }
-        particlesGeometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
-
-        const particlesMaterial = new THREE.PointsMaterial({
-            size: 0.008,
-            color: '#3b82f6',
-            transparent: true,
-            opacity: 0.8,
-            blending: THREE.AdditiveBlending
-        });
-
-        const particlesMesh = new THREE.Points(particlesGeometry, particlesMaterial);
-        scene.add(particlesMesh);
-        camera.position.z = 3;
-
-        let mouseX = 0;
-        let mouseY = 0;
-        document.addEventListener('mousemove', (e) => {
-            mouseX = (e.clientX / window.innerWidth - 0.5);
-            mouseY = (e.clientY / window.innerHeight - 0.5);
-        });
-
-        function animate() {
-            requestAnimationFrame(animate);
-            particlesMesh.rotation.y += 0.0008;
-            // 平滑跟随
-            particlesMesh.rotation.x += (mouseY * 0.1 - particlesMesh.rotation.x) * 0.05;
-            particlesMesh.rotation.y += (mouseX * 0.1 - particlesMesh.rotation.y) * 0.05;
-            renderer.render(scene, camera);
-        }
-
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-
-        animate();
+        window.onload = startClock;
     </script>
+
 </body>
 </html>
