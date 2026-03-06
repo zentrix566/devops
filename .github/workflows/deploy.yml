@@ -50,13 +50,28 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            script: |
-            # 1. 进入你的配置目录（假设你在服务器存了 yaml）
-            # 2. 直接 apply 最新的配置（确保 strategy: Recreate 生效）
-            # kubectl apply -f /root/deploy.yaml 
+            # 1. 查找当前正在工作的颜色 (active_color)
+            ACTIVE_COLOR=$(kubectl get svc zentrix-service -o jsonpath='{.spec.selector.color}')
             
-            # 3. 触发重启
-            kubectl rollout restart deployment zentrix-lab
+            # 2. 确定需要更新的颜色 (target_color)
+            if [ "$ACTIVE_COLOR" == "blue" ]; then
+              TARGET_COLOR="green"
+            else
+              TARGET_COLOR="blue"
+            fi
             
-            # 4. 检查状态（Recreate 模式下通常很快）
-            kubectl rollout status deployment zentrix-lab --timeout=90s
+            echo "当前在线版本: $ACTIVE_COLOR, 准备更新备用版本: $TARGET_COLOR"
+            
+            # 3. 更新备用版本的镜像
+            # 注意：镜像名需要和你仓库一致，这里使用你定义的镜像名
+            kubectl set image deployment/zentrix-$TARGET_COLOR lab-container=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            
+            # 4. 强制重启并等待备用版本就绪
+            kubectl rollout restart deployment zentrix-$TARGET_COLOR
+            kubectl rollout status deployment zentrix-$TARGET_COLOR --timeout=90s
+            
+            # 5. 【可选】自动切流（如果你希望推送到 main 就直接切流）
+            # 如果你想手动切流验证，就注释掉下面这一行
+            kubectl patch svc zentrix-service -p "{\"spec\":{\"selector\":{\"color\":\"$TARGET_COLOR\"}}}"
+            
+            echo "部署成功！流量已切换至: $TARGET_COLOR"
