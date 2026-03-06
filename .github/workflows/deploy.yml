@@ -4,23 +4,29 @@ on:
   push:
     branches: [ "main" ]
 
-# 🚀 必须要加这个权限块，否则写入 GHCR 会失败
+# 🚀 权限配置：允许写入 GHCR 镜像库
 permissions:
   contents: read
   packages: write
 
 jobs:
+  # --- 第一阶段：构建并推送镜像 ---
   build-and-push:
     runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.vars.outputs.sha_short }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Get short SHA
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          # 💡 强制使用 github.actor 以确保路径匹配
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -29,10 +35,11 @@ jobs:
         with:
           context: .
           push: true
-          # 🚀 确保 tags 缩进正确，且使用管道符 |
           tags: |
+            ghcr.io/${{ github.repository }}:${{ steps.vars.outputs.sha_short }}
             ghcr.io/${{ github.repository }}:latest
 
+  # --- 第二阶段：金丝雀部署 (25% 流量) ---
   deploy-canary:
     needs: build-and-push
     runs-on: ubuntu-latest
@@ -43,15 +50,117 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT }} # 建议显式加上端口
+          port: ${{ secrets.SSH_PORT }}
           script: |
-            # 1. 应用金丝雀配置（10% 流量）
-            kubectl apply -f /root/canary-deploy.yaml
+            IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
+            REPO_PATH="${{ github.repository }}"
             
-            # 2. 强制重启金丝雀 Pod
-            kubectl rollout restart deployment zentrix-v2-canary
-            
-            # 3. 等待启动完成（可选，增加稳定性）
+            echo "🚀 正在部署金丝雀版本 (V2): ${IMAGE_TAG}"
+
+            # 动态生成并应用 V2 Deployment & Service
+            cat <<EOF | kubectl apply -f -
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: zentrix-v2-canary
+            spec:
+              replicas: 1
+              selector:
+                matchLabels:
+                  app: zentrix
+                  version: v2
+              template:
+                metadata:
+                  labels:
+                    app: zentrix
+                    version: v2
+                spec:
+                  imagePullSecrets: [{name: ghcr-login}]
+                  containers:
+                  - name: lab-container
+                    image: ghcr.io/${REPO_PATH}:${IMAGE_TAG}
+                    ports:
+                    - containerPort: 80
+            ---
+            apiVersion: v1
+            kind: Service
+            metadata:
+              name: zentrix-v2-service
+            spec:
+              ports:
+                - port: 80
+                  targetPort: 80
+              selector:
+                app: zentrix
+                version: v2
+            EOF
+
+            # 动态生成并应用金丝雀 Ingress (权重 25%)
+            cat <<EOF | kubectl apply -f -
+            apiVersion: networking.k8s.io/v1
+            kind: Ingress
+            metadata:
+              name: zentrix-ingress-canary
+              annotations:
+                nginx.ingress.kubernetes.io/canary: "true"
+                nginx.ingress.kubernetes.io/canary-weight: "25"
+            spec:
+              ingressClassName: nginx
+              rules:
+              - http:
+                  paths:
+                  - path: /
+                    pathType: Prefix
+                    backend:
+                      service:
+                        name: zentrix-v2-service
+                        port:
+                          number: 80
+            EOF
+
+            # 等待 V2 Pod 启动就绪
             kubectl rollout status deployment zentrix-v2-canary --timeout=60s
+            echo "✅ 金丝雀版本已上线，当前承载 25% 流量。"
+
+  # --- 第三阶段：自动化转正 (Promotion) ---
+  promote-to-production:
+    needs: [build-and-push, deploy-canary]
+    runs-on: ubuntu-latest
+    # 💡 建议在 GitHub 设置中添加 environment: production 手工确认，增强安全性
+    steps:
+      - name: Automated Health Check & Promotion
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
+            REPO_PATH="${{ github.repository }}"
             
-            echo "Canary 已发布！当前 10% 流量在 V2。"
+            echo "🔍 开始对 V2 版本进行最终检查..."
+
+            # 检查 V2 是否有可用的副本
+            READY_REPLICAS=$(kubectl get deployment zentrix-v2-canary -o jsonpath='{.status.readyReplicas}')
+            
+            if [ "$READY_REPLICAS" != "1" ]; then
+              echo "❌ 错误：V2 版本运行异常，中止转正！"
+              exit 1
+            fi
+
+            echo "✅ 检查通过。正在将 V1 升级至新镜像并接管全量流量..."
+
+            # 1. 升级主 Deployment (V1)
+            kubectl set image deployment/zentrix-v1 lab-container=ghcr.io/${REPO_PATH}:${IMAGE_TAG}
+            
+            # 2. 等待 V1 滚动更新完成
+            kubectl rollout status deployment zentrix-v1 --timeout=90s
+
+            # 3. 流量收拢：删除金丝雀 Ingress
+            kubectl delete ingress zentrix-ingress-canary --ignore-not-found
+            
+            # 4. 资源回收：将金丝雀 Pod 缩减为 0
+            kubectl scale deployment zentrix-v2-canary --replicas=0
+
+            echo "🎉 全量发布成功！版本已更新为 ${IMAGE_TAG}。"

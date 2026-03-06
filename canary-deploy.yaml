@@ -1,4 +1,4 @@
-# --- 1. 主版本 (Stable V1) ---
+# --- 1. 稳定版 (V1 - 3个副本) ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -18,7 +18,7 @@ spec:
       imagePullSecrets: [{name: ghcr-login}]
       containers:
       - name: lab-container
-        image: ghcr.io/zentrix566/devops:v1 # 稳定版镜像
+        image: ghcr.io/zentrix566/devops:v1
         ports:
         - containerPort: 80
 ---
@@ -34,13 +34,13 @@ spec:
     app: zentrix
     version: v1
 ---
-# --- 2. 金丝雀版本 (Canary V2) ---
+# --- 2. 金丝雀版 (V2 - 1个副本) ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: zentrix-v2-canary
 spec:
-  replicas: 1 # 金丝雀只需要 1 个副本用来测试
+  replicas: 1
   selector:
     matchLabels:
       app: zentrix
@@ -54,7 +54,7 @@ spec:
       imagePullSecrets: [{name: ghcr-login}]
       containers:
       - name: lab-container
-        image: ghcr.io/zentrix566/devops:latest # 新版镜像
+        image: ghcr.io/zentrix566/devops:latest
         ports:
         - containerPort: 80
 ---
@@ -70,16 +70,35 @@ spec:
     app: zentrix
     version: v2
 ---
-# --- 3. 金丝雀 Ingress (分流规则) ---
+# --- 3. 流量分发规则 (Ingress) ---
+# 主 Ingress：默认所有流量去 V1
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: zentrix-ingress-main
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: zentrix-v1-service
+            port:
+              number: 80
+---
+# 金丝雀 Ingress：将 10% 的流量“劫持”到 V2
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: zentrix-ingress-canary
   annotations:
-    kubernetes.io/ingress.class: nginx
-    nginx.ingress.kubernetes.io/canary: "true"         # ?? 开启金丝雀
-    nginx.ingress.kubernetes.io/canary-weight: "10"    # ?? 仅 10% 流量进入 V2
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "10"
 spec:
+  ingressClassName: nginx
   rules:
   - http:
       paths:
