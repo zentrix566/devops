@@ -32,7 +32,7 @@ jobs:
           # 🚀 确保 tags 缩进正确，且使用管道符 |
           tags: |
             ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:v1
+            # ghcr.io/${{ github.repository }}:v1
 
   deploy-canary:
     needs: build-and-push
