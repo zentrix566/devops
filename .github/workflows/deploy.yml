@@ -1,77 +1,44 @@
-name: Docker Build and Standard Deploy
+name: Canary Deployment Pipeline
 
 on:
   push:
-    branches: [ "main" ]  # 只有 main 分支提交时触发
-  workflow_dispatch:      # 允许手动触发
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+    branches: [ "main" ]
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
-
-      # 1. 登录到 GitHub 镜像仓库 (GHCR)
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      # 2. 构建镜像并推送到仓库
-      - name: Build and push Docker image
+      - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          # 转换为小写镜像名，GitHub 用户名大写可能导致构建报错
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          tags: ghcr.io/${{ github.repository }}:latest
 
-  deploy:
+  deploy-canary:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      # 3. 通过 SSH 登录服务器并通知 K3s 重启 Pod
-      - name: SSH Remote Deployment
+      - name: SSH Deploy Canary
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT }}
           script: |
-            # 1. 查找当前正在工作的颜色 (active_color)
-            ACTIVE_COLOR=$(kubectl get svc zentrix-service -o jsonpath='{.spec.selector.color}')
+            # 1. 应用金丝雀配置（10% 流量）
+            # 假设你已经把上面的 yaml 传到了服务器
+            kubectl apply -f /root/canary-deploy.yaml
             
-            # 2. 确定需要更新的颜色 (target_color)
-            if [ "$ACTIVE_COLOR" == "blue" ]; then
-              TARGET_COLOR="green"
-            else
-              TARGET_COLOR="blue"
-            fi
+            # 2. 强制重启金丝雀 Pod 确保拉取最新镜像
+            kubectl rollout restart deployment zentrix-v2-canary
             
-            echo "当前在线版本: $ACTIVE_COLOR, 准备更新备用版本: $TARGET_COLOR"
-            
-            # 3. 更新备用版本的镜像
-            # 注意：镜像名需要和你仓库一致，这里使用你定义的镜像名
-            kubectl set image deployment/zentrix-$TARGET_COLOR lab-container=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-            
-            # 4. 强制重启并等待备用版本就绪
-            kubectl rollout restart deployment zentrix-$TARGET_COLOR
-            kubectl rollout status deployment zentrix-$TARGET_COLOR --timeout=90s
-            
-            # 5. 【可选】自动切流（如果你希望推送到 main 就直接切流）
-            # 如果你想手动切流验证，就注释掉下面这一行
-            kubectl patch svc zentrix-service -p "{\"spec\":{\"selector\":{\"color\":\"$TARGET_COLOR\"}}}"
-            
-            echo "部署成功！流量已切换至: $TARGET_COLOR"
+            echo "Canary 已发布！当前 10% 流量在 V2。请检查日志并访问 IP 确认。"
