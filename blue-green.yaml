@@ -1,0 +1,79 @@
+# --- 1. 蓝色版本 (当前版本) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zentrix-blue
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zentrix
+      color: blue  # 🔑 唯一标识
+  template:
+    metadata:
+      labels:
+        app: zentrix
+        color: blue
+    spec:
+      imagePullSecrets: [{name: ghcr-login}]
+      containers:
+      - name: lab-container
+        image: ghcr.io/zentrix566/devops:latest # 你现在的镜像
+        ports:
+        - containerPort: 80
+---
+# --- 2. 绿色版本 (新版本) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zentrix-green
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zentrix
+      color: green # 🔑 唯一标识
+  template:
+    metadata:
+      labels:
+        app: zentrix
+        color: green
+    spec:
+      imagePullSecrets: [{name: ghcr-login}]
+      containers:
+      - name: lab-container
+        image: ghcr.io/zentrix566/devops:latest # 以后这里填新镜像标签
+        ports:
+        - containerPort: 80
+---
+# --- 3. 流量开关 (Service) ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zentrix-service
+spec:
+  ports:
+    - port: 80
+      targetPort: 80
+  selector:
+    app: zentrix
+    color: blue # 💡 重点：改这里就能实现秒级切换
+---
+# --- 4. 入口大门 (Ingress) ---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: zentrix-ingress
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: zentrix-service
+            port:
+              number: 80
