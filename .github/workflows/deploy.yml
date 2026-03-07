@@ -122,45 +122,45 @@ jobs:
             kubectl rollout status deployment zentrix-v2-canary --timeout=60s
             echo "✅ 金丝雀版本已上线，当前承载 25% 流量。"
 
-  # --- 第三阶段：自动化转正 (Promotion) ---
-  promote-to-production:
-    needs: [build-and-push, deploy-canary]
-    runs-on: ubuntu-latest
-    # 💡 建议在 GitHub 设置中添加 environment: production 手工确认，增强安全性
-    steps:
-      - name: Automated Health Check & Promotion
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT }}
-          script: |
-            IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
-            REPO_PATH="${{ github.repository }}"
+  # # --- 第三阶段：自动化转正 (Promotion) ---
+  # promote-to-production:
+  #   needs: [build-and-push, deploy-canary]
+  #   runs-on: ubuntu-latest
+  #   # 💡 建议在 GitHub 设置中添加 environment: production 手工确认，增强安全性
+  #   steps:
+  #     - name: Automated Health Check & Promotion
+  #       uses: appleboy/ssh-action@v1.0.3
+  #       with:
+  #         host: ${{ secrets.SSH_HOST }}
+  #         username: ${{ secrets.SSH_USER }}
+  #         key: ${{ secrets.SSH_KEY }}
+  #         port: ${{ secrets.SSH_PORT }}
+  #         script: |
+  #           IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
+  #           REPO_PATH="${{ github.repository }}"
             
-            echo "🔍 开始对 V2 版本进行最终检查..."
+  #           echo "🔍 开始对 V2 版本进行最终检查..."
 
-            # 检查 V2 是否有可用的副本
-            READY_REPLICAS=$(kubectl get deployment zentrix-v2-canary -o jsonpath='{.status.readyReplicas}')
+  #           # 检查 V2 是否有可用的副本
+  #           READY_REPLICAS=$(kubectl get deployment zentrix-v2-canary -o jsonpath='{.status.readyReplicas}')
             
-            if [ "$READY_REPLICAS" != "1" ]; then
-              echo "❌ 错误：V2 版本运行异常，中止转正！"
-              exit 1
-            fi
+  #           if [ "$READY_REPLICAS" != "1" ]; then
+  #             echo "❌ 错误：V2 版本运行异常，中止转正！"
+  #             exit 1
+  #           fi
 
-            echo "✅ 检查通过。正在将 V1 升级至新镜像并接管全量流量..."
+  #           echo "✅ 检查通过。正在将 V1 升级至新镜像并接管全量流量..."
 
-            # 1. 升级主 Deployment (V1)
-            kubectl set image deployment/zentrix-v1 lab-container=ghcr.io/${REPO_PATH}:${IMAGE_TAG}
+  #           # 1. 升级主 Deployment (V1)
+  #           kubectl set image deployment/zentrix-v1 lab-container=ghcr.io/${REPO_PATH}:${IMAGE_TAG}
             
-            # 2. 等待 V1 滚动更新完成
-            kubectl rollout status deployment zentrix-v1 --timeout=90s
+  #           # 2. 等待 V1 滚动更新完成
+  #           kubectl rollout status deployment zentrix-v1 --timeout=90s
 
-            # 3. 流量收拢：删除金丝雀 Ingress
-            kubectl delete ingress zentrix-ingress-canary --ignore-not-found
+  #           # 3. 流量收拢：删除金丝雀 Ingress
+  #           kubectl delete ingress zentrix-ingress-canary --ignore-not-found
             
-            # 4. 资源回收：将金丝雀 Pod 缩减为 0
-            kubectl scale deployment zentrix-v2-canary --replicas=0
+  #           # 4. 资源回收：将金丝雀 Pod 缩减为 0
+  #           kubectl scale deployment zentrix-v2-canary --replicas=0
 
-            echo "🎉 全量发布成功！版本已更新为 ${IMAGE_TAG}。"
+  #           echo "🎉 全量发布成功！版本已更新为 ${IMAGE_TAG}。"
