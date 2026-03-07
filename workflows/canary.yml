@@ -1,4 +1,4 @@
-name: A/B Testing Deployment Pipeline
+name: Canary Deployment Pipeline (Gradual)
 
 on:
   push:
@@ -17,15 +17,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Get short SHA
         id: vars
         run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
@@ -33,12 +36,12 @@ jobs:
           push: true
           tags: ghcr.io/${{ github.repository }}:${{ steps.vars.outputs.sha_short }}
 
-  # --- 2. 部署 B 版本 (实验组) ---
-  deploy-ab-test:
+  # --- 2. 部署 25% 流量 ---
+  deploy-canary-25:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - name: SSH Deploy AB Test
+      - name: SSH Deploy 25%
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -49,23 +52,23 @@ jobs:
             IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
             REPO_PATH="${{ github.repository }}"
             
-            # 部署 B 版本 Deployment, Service 和基于 Header 的 Ingress
+            # 部署 V2 实例和金丝雀 Ingress (初始权重 25)
             cat <<EOF | kubectl apply -f -
             apiVersion: apps/v1
             kind: Deployment
             metadata:
-              name: zentrix-v2-ab
+              name: zentrix-v2-canary
             spec:
               replicas: 1
               selector:
                 matchLabels:
                   app: zentrix
-                  version: v2-ab
+                  version: v2
               template:
                 metadata:
                   labels:
                     app: zentrix
-                    version: v2-ab
+                    version: v2
                 spec:
                   imagePullSecrets: [{name: ghcr-login}]
                   containers:
@@ -77,24 +80,22 @@ jobs:
             apiVersion: v1
             kind: Service
             metadata:
-              name: zentrix-v2-ab-service
+              name: zentrix-v2-service
             spec:
               ports:
                 - port: 80
                   targetPort: 80
               selector:
                 app: zentrix
-                version: v2-ab
+                version: v2
             ---
             apiVersion: networking.k8s.io/v1
             kind: Ingress
             metadata:
-              name: zentrix-ingress-ab-test
+              name: zentrix-ingress-canary
               annotations:
                 nginx.ingress.kubernetes.io/canary: "true"
-                # 核心逻辑：基于 Header 进行分流
-                nginx.ingress.kubernetes.io/canary-by-header: "x-version-target"
-                nginx.ingress.kubernetes.io/canary-by-header-value: "canary"
+                nginx.ingress.kubernetes.io/canary-weight: "25"
             spec:
               ingressClassName: nginx
               rules:
@@ -104,19 +105,38 @@ jobs:
                     pathType: Prefix
                     backend:
                       service:
-                        name: zentrix-v2-ab-service
+                        name: zentrix-v2-service
                         port:
                           number: 80
             EOF
-            echo "✅ A/B 测试环境已就绪。携带 Header 'x-version-target: canary' 的请求将进入 V2。"
+            kubectl rollout status deployment zentrix-v2-canary --timeout=60s
+            echo "✅ 25% 流量已切换至新版本。"
 
-  # --- 3. 数据分析与人工决策 (审核阶段) ---
-  analyze-and-promote:
-    needs: [build-and-push, deploy-ab-test]
+  # --- 3. 部署 50% 流量 (人工审核点 1) ---
+  deploy-canary-50:
+    needs: [build-and-push, deploy-canary-25]
     runs-on: ubuntu-latest
-    environment: production # 需要人工审核
+    environment: canary-50
     steps:
-      - name: Full Promotion
+      - name: SSH Promote to 50%
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            echo "📈 正在将权重调整为 50%..."
+            kubectl annotate ingress zentrix-ingress-canary nginx.ingress.kubernetes.io/canary-weight="50" --overwrite
+            echo "✅ 50% 流量已切换。"
+
+  # --- 4. 全量转正 (人工审核点 2) ---
+  promote-to-production:
+    needs: [build-and-push, deploy-canary-50]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: SSH Full Release
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -127,11 +147,13 @@ jobs:
             IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
             REPO_PATH="${{ github.repository }}"
             
-            # A/B 测试成功后，将 V2 覆盖 V1
+            echo "🚀 正在进行全量转正..."
+            # 1. 升级主版本 V1
             kubectl set image deployment/zentrix-v1 lab-container=ghcr.io/${REPO_PATH}:${IMAGE_TAG}
-            kubectl rollout status deployment zentrix-v1
+            kubectl rollout status deployment zentrix-v1 --timeout=90s
+
+            # 2. 清理金丝雀
+            kubectl delete ingress zentrix-ingress-canary --ignore-not-found
+            kubectl scale deployment zentrix-v2-canary --replicas=0
             
-            # 清理 AB 测试资源
-            kubectl delete ingress zentrix-ingress-ab-test
-            kubectl scale deployment zentrix-v2-ab --replicas=0
-            echo "🎉 A/B 测试完成，B 版本性能优异，已全量上线。"
+            echo "🎉 发布成功，V1 已升级为最新镜像，所有流量已回归主路径。"
