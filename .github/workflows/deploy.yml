@@ -49,8 +49,10 @@ jobs:
 
       # 关键拦截逻辑：只要不是 success，直接强制退出
       - name: Final Enforcement Gate
-        if: steps.hadolint.outcome != 'success'
+        # 关键修改：使用 always() 确保即使前面步骤失败，这一步也会执行检测
+        if: always() && steps.hadolint.outcome != 'success'
         run: |
+          echo "❌ 检测到代码规范问题，强制中断流水线。"
           echo "Lint status is ${{ steps.hadolint.outcome }}. Failing job to block downstream tasks."
           exit 1
 
