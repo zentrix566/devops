@@ -1,44 +1,48 @@
-name: A/B Testing Deployment Pipeline
+name: Docker Build and Standard Deploy
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main" ]  # 只有 main 分支提交时触发
+  workflow_dispatch:      # 允许手动触发
 
-permissions:
-  contents: read
-  packages: write
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # --- 1. 构建阶段 ---
   build-and-push:
     runs-on: ubuntu-latest
-    outputs:
-      image_tag: ${{ steps.vars.outputs.sha_short }}
+    permissions:
+      contents: read
+      packages: write
+
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
-      - name: Get short SHA
-        id: vars
-        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      # 1. 登录到 GitHub 镜像仓库 (GHCR)
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push
+
+      # 2. 构建镜像并推送到仓库
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository }}:${{ steps.vars.outputs.sha_short }}
+          # 转换为小写镜像名，GitHub 用户名大写可能导致构建报错
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
-  # --- 2. 部署 B 版本 (实验组) ---
-  deploy-ab-test:
+  deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - name: SSH Deploy AB Test
+      # 3. 通过 SSH 登录服务器并通知 K3s 重启 Pod
+      - name: SSH Remote Deployment
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -46,92 +50,13 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
-            REPO_PATH="${{ github.repository }}"
+            script: |
+            # 1. 进入你的配置目录（假设你在服务器存了 yaml）
+            # 2. 直接 apply 最新的配置（确保 strategy: Recreate 生效）
+            # kubectl apply -f /root/deploy.yaml 
             
-            # 部署 B 版本 Deployment, Service 和基于 Header 的 Ingress
-            cat <<EOF | kubectl apply -f -
-            apiVersion: apps/v1
-            kind: Deployment
-            metadata:
-              name: zentrix-v2-ab
-            spec:
-              replicas: 1
-              selector:
-                matchLabels:
-                  app: zentrix
-                  version: v2-ab
-              template:
-                metadata:
-                  labels:
-                    app: zentrix
-                    version: v2-ab
-                spec:
-                  imagePullSecrets: [{name: ghcr-login}]
-                  containers:
-                  - name: lab-container
-                    image: ghcr.io/${REPO_PATH}:${IMAGE_TAG}
-                    ports:
-                    - containerPort: 80
-            ---
-            apiVersion: v1
-            kind: Service
-            metadata:
-              name: zentrix-v2-ab-service
-            spec:
-              ports:
-                - port: 80
-                  targetPort: 80
-              selector:
-                app: zentrix
-                version: v2-ab
-            ---
-            apiVersion: networking.k8s.io/v1
-            kind: Ingress
-            metadata:
-              name: zentrix-ingress-ab-test
-              annotations:
-                nginx.ingress.kubernetes.io/canary: "true"
-                # 核心逻辑：基于 Header 进行分流
-                nginx.ingress.kubernetes.io/canary-by-header: "x-version-target"
-                nginx.ingress.kubernetes.io/canary-by-header-value: "canary"
-            spec:
-              ingressClassName: nginx
-              rules:
-              - http:
-                  paths:
-                  - path: /
-                    pathType: Prefix
-                    backend:
-                      service:
-                        name: zentrix-v2-ab-service
-                        port:
-                          number: 80
-            EOF
-            echo "✅ A/B 测试环境已就绪。携带 Header 'x-version-target: canary' 的请求将进入 V2。"
-
-  # --- 3. 数据分析与人工决策 (审核阶段) ---
-  analyze-and-promote:
-    needs: [build-and-push, deploy-ab-test]
-    runs-on: ubuntu-latest
-    environment: production # 需要人工审核
-    steps:
-      - name: Full Promotion
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT }}
-          script: |
-            IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
-            REPO_PATH="${{ github.repository }}"
+            # 3. 触发重启
+            kubectl rollout restart deployment zentrix-lab
             
-            # A/B 测试成功后，将 V2 覆盖 V1
-            kubectl set image deployment/zentrix-v1 lab-container=ghcr.io/${REPO_PATH}:${IMAGE_TAG}
-            kubectl rollout status deployment zentrix-v1
-            
-            # 清理 AB 测试资源
-            kubectl delete ingress zentrix-ingress-ab-test
-            kubectl scale deployment zentrix-v2-ab --replicas=0
-            echo "🎉 A/B 测试完成，B 版本性能优异，已全量上线。"
+            # 4. 检查状态（Recreate 模式下通常很快）
+            kubectl rollout status deployment zentrix-lab --timeout=90s
