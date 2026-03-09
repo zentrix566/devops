@@ -1,16 +1,61 @@
-name: Docker Build and Standard Deploy
+name: "Zentrix Full CI/CD Pipeline"
 
 on:
   push:
-    branches: [ "main" ]  # 只有 main 分支提交时触发
-  workflow_dispatch:      # 允许手动触发
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
+  # 统一转换为小写，防止 GitHub 用户名大写导致 Docker 镜像名报错
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # ==========================================
+  # 阶段 1：基础规范审查 (门禁)
+  # ==========================================
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        id: hadolint
+        with:
+          dockerfile: Dockerfile
+          format: tty
+          no-fail: true 
+
+      - name: Post Comment to PR
+        # 仅在 PR 且 lint 失败时评论
+        if: steps.hadolint.outcome != 'success' && github.event_name == 'pull_request'
+        uses: mshick/add-pr-comment@v2
+        with:
+          message: |
+            ## 🤖 Zentrix 审查官报告
+            🔍 **Dockerfile 检测到规范问题：**
+            ```text
+            ${{ steps.hadolint.outputs.results }}
+            ```
+            > ❌ 审查未通过，请修复后再次提交，否则无法启动构建。
+
+      - name: Check Lint Status
+        if: steps.hadolint.outcome != 'success'
+        run: exit 1
+
+  # ==========================================
+  # 阶段 2：构建与推送 (只有 Lint 通过才运行)
+  # ==========================================
   build-and-push:
+    needs: lint
+    # 只有在主分支 push 或者手动触发时才进行构建
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,7 +65,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 1. 登录到 GitHub 镜像仓库 (GHCR)
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -28,20 +72,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 2. 构建镜像并推送到仓库
-      - name: Build and push Docker image
+      - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          # 转换为小写镜像名，GitHub 用户名大写可能导致构建报错
+          # 使用 lower case 转换镜像名
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
+  # ==========================================
+  # 阶段 3：远程部署 (只有 Build 成功才运行)
+  # ==========================================
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      # 3. 通过 SSH 登录服务器并通知 K3s 重启 Pod
       - name: SSH Remote Deployment
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -50,13 +95,6 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            script: |
-            # 1. 进入你的配置目录（假设你在服务器存了 yaml）
-            # 2. 直接 apply 最新的配置（确保 strategy: Recreate 生效）
-            # kubectl apply -f /root/deploy.yaml 
-            
-            # 3. 触发重启
+            # 重启服务，拉取最新镜像
             kubectl rollout restart deployment zentrix-lab
-            
-            # 4. 检查状态（Recreate 模式下通常很快）
             kubectl rollout status deployment zentrix-lab --timeout=90s
