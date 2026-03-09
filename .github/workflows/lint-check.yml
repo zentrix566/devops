@@ -13,28 +13,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 1. 审查 Dockerfile
+      # 1. 修正后的 Dockerfile 审查
+      # 原 'annotate' 无效，hadolint 现在默认会在 GitHub UI 中显示注解
       - name: Lint Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: Dockerfile
-          # 结果会直接以 Comment 形式出现在 PR 中
-          annotate: true
+          # 移除了无效的 annotate，改用 format 来确保输出兼容
+          format: tty
 
-      # 2. 审查 K8s YAML
+      # 2. 修正后的 K8s YAML 审查
+      # 原 'fail-on-violations' 在新版本中被移除了（现在检测到错误默认就会失败）
       - name: Scan Kubernetes files
-        uses: stackrox/kube-linter-action@v1
+        uses: stackrox/kube-linter-action@v1.0.4
         with:
           directory: .
-          # 如果不符合规范，Pipeline 会直接挂掉，不让你合并
-          fail-on-violations: true
+          # 根据报错提示，保留有效参数
+          config: .kube-linter.yaml # 如果没有该文件可删掉此行
 
-      # 3. 审查前端代码 (HTML/CSS)
+      # 3. 基础规范审查 (保持不变)
       - name: Lint HTML/CSS
         uses: github/super-linter/slim@v5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VALIDATE_HTML: true
           VALIDATE_CSS: true
-          # 只扫描有改动的文件，提高效率
           VALIDATE_ALL_CODEBASE: false
