@@ -5,7 +5,7 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -13,12 +13,15 @@ env:
 
 jobs:
   # ==========================================
-  # 阶段 1：Lint 门禁 (代码规范审查)
+  # 阶段 1：Lint 门禁
   # ==========================================
   lint:
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write # 赋予机器人评论权限
+      pull-requests: write
+    # 核心：定义 Job 级别的输出，确保状态可追踪
+    outputs:
+      lint_outcome: ${{ steps.hadolint.outcome }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,10 +32,9 @@ jobs:
         with:
           dockerfile: Dockerfile
           format: tty
-          no-fail: true # 关键：设置为 true 以确保后续能运行机器人评论步骤
+          no-fail: true # 为了让机器人能在报错后继续发言
 
       - name: Post Comment to PR
-        # 仅在 PR 且检测到错误时运行
         if: steps.hadolint.outcome != 'success' && github.event_name == 'pull_request'
         uses: mshick/add-pr-comment@v2
         with:
@@ -42,28 +44,30 @@ jobs:
             ```text
             ${{ steps.hadolint.outputs.results }}
             ```
-            > ❌ 审查未通过，构建流程已拦截。请修复上述问题后重新提交！🚀
+            > ❌ 审查未通过，构建流水线已熔断。请修复后再提交！
           allow-repeats: false
 
-      # 核心拦截器：无论 push 还是 PR，只要 lint 没过，就强制让任务失败
-      - name: Enforcement Gate
+      # 关键拦截逻辑：只要不是 success，直接强制退出
+      - name: Final Enforcement Gate
         if: steps.hadolint.outcome != 'success'
         run: |
-          echo "❌ Lint 检查未通过，正在终止流水线..."
-          exit 1 
+          echo "Lint status is ${{ steps.hadolint.outcome }}. Failing job to block downstream tasks."
+          exit 1
 
   # ==========================================
-  # 阶段 2：Build & Push (只有 Lint 成功才运行)
+  # 阶段 2：Build & Push (只有 lint 真正成功才运行)
   # ==========================================
   build-and-push:
-    needs: lint # 建立任务依赖，lint 失败则此任务跳过
-    # 只有在 main 分支推送或手动触发时执行构建
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: lint
+    # 增加严格判断：只有 needs.lint 的结果确实是 success 且是 push/dispatch 才会跑
+    if: |
+      always() && 
+      needs.lint.result == 'success' && 
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -75,16 +79,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          # 自动处理镜像名小写逻辑，防止大写用户名报错
           tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/zentrix-lab:latest
 
   # ==========================================
-  # 阶段 3：SSH Deploy (只有 Build 成功才运行)
+  # 阶段 3：SSH Deploy
   # ==========================================
   deploy:
     needs: build-and-push
@@ -98,8 +101,5 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            echo "🚀 正在服务器执行更新..."
-            # 触发 K3s 集群中的 Deployment 重启
             kubectl rollout restart deployment zentrix-lab
-            # 等待滚动更新完成，设置 90 秒超时
             kubectl rollout status deployment zentrix-lab --timeout=90s
