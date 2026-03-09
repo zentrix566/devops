@@ -20,47 +20,55 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 1. Dockerfile 审查 (Hadolint)
       - name: Lint Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         id: hadolint
         with:
           dockerfile: Dockerfile
           format: tty
-          # 关键改动：去掉 no-fail，由下方的 continue-on-error 接管
-        continue-on-error: true # 无论 Hadolint 报什么错，都强制继续执行后续步骤
+        continue-on-error: true
 
+      # 2. Kubernetes YAML 审查 (Kube-linter)
+      - name: Scan Kubernetes YAML
+        uses: stackrox/kube-linter-action@v1.0.4
+        id: kube-linter
+        with:
+          # 扫描项目根目录下的所有 yaml 文件
+          directory: .
+          # 排除不需要检查的文件（可选）
+          # exclude-file-checks: "zentrix-lab.yaml" 
+        continue-on-error: true
+
+      # 3. 机器人自动评论 (针对 PR 场景)
       - name: Post Comment to PR
-        # 仅在有错误且是 PR 时执行
-        if: steps.hadolint.outcome == 'failure' && github.event_name == 'pull_request'
+        if: always() && github.event_name == 'pull_request' && (steps.hadolint.outcome == 'failure' || steps.kube-linter.outcome == 'failure')
         uses: mshick/add-pr-comment@v2
         with:
           message: |
             ## 🤖 Zentrix 审查官报告
-            🔍 **Dockerfile 检测到规范问题：**
-            ```text
-            ${{ steps.hadolint.outputs.results }}
-            ```
-            > ❌ 审查未通过。
+            
+            ${{ steps.hadolint.outcome != 'success' && '❌ **Dockerfile** 发现规范问题，请查看日志。' || '✅ **Dockerfile** 检查通过。' }}
+            
+            ${{ steps.kube-linter.outcome != 'success' && '❌ **K8s YAML** 发现安全隐患，请及时修复。' || '✅ **K8s YAML** 检查通过。' }}
+            
+            > 请修复红色项目，否则流水线将无法继续！
           allow-repeats: false
 
+      # 4. 强制门禁 (熔断点)
       - name: Final Enforcement Gate
-        # 使用 always() 确保即使 checkout 挂了（虽然概率低）也会跑
         if: always()
         run: |
-          # 显式判断上一步的状态
-          if [ "${{ steps.hadolint.outcome }}" != "success" ]; then
-            echo "❌ 发现 Dockerfile 规范违规。状态: ${{ steps.hadolint.outcome }}"
+          if [ "${{ steps.hadolint.outcome }}" != "success" ] || [ "${{ steps.kube-linter.outcome }}" != "success" ]; then
+            echo "❌ 发现代码规范或安全违规。流程已中断。"
             exit 1
           else
-            echo "✅ 代码规范检查通过。"
+            echo "✅ 所有规范检查已通过。"
           fi
 
   build-and-push:
     needs: lint
-    if: |
-      github.event_name == 'push' || 
-      github.event_name == 'workflow_dispatch'
-    # 注意：不再在 build 任务里写 always()，因为我们需要它在 lint 失败时被跳过
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
