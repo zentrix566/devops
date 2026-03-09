@@ -49,14 +49,9 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
-          script: |
-            script: |
-            # 1. 进入你的配置目录（假设你在服务器存了 yaml）
-            # 2. 直接 apply 最新的配置（确保 strategy: Recreate 生效）
-            # kubectl apply -f /root/deploy.yaml 
-            
-            # 3. 触发重启
+          script: |            
+            # 1. 触发重启
             kubectl rollout restart deployment zentrix-lab
             
-            # 4. 检查状态（Recreate 模式下通常很快）
+            # 2. 检查状态
             kubectl rollout status deployment zentrix-lab --timeout=90s
