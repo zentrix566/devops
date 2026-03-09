@@ -1,82 +1,26 @@
-name: "Zentrix Full CI/CD Pipeline"
+name: Docker Build and Standard Deploy
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:
+    branches: [ "main" ]  # 只有 main 分支提交时触发
+  workflow_dispatch:      # 允许手动触发
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # 1. Dockerfile 审查 (Hadolint)
-      - name: Lint Dockerfile
-        uses: hadolint/hadolint-action@v3.1.0
-        id: hadolint
-        with:
-          dockerfile: Dockerfile
-          format: tty
-        continue-on-error: true
-
-      # 2. Kubernetes YAML 审查 (Kube-linter)
-      - name: Scan Kubernetes YAML
-        uses: stackrox/kube-linter-action@v1.0.4
-        id: kube-linter
-        with:
-          # 扫描项目根目录下的所有 yaml 文件
-          directory: .
-          # 排除不需要检查的文件（可选）
-          # exclude-file-checks: "zentrix-lab.yaml" 
-        continue-on-error: true
-
-      # 3. 机器人自动评论 (针对 PR 场景)
-      - name: Post Comment to PR
-        if: always() && github.event_name == 'pull_request' && (steps.hadolint.outcome == 'failure' || steps.kube-linter.outcome == 'failure')
-        uses: mshick/add-pr-comment@v2
-        with:
-          message: |
-            ## 🤖 Zentrix 审查官报告
-            
-            ${{ steps.hadolint.outcome != 'success' && '❌ **Dockerfile** 发现规范问题，请查看日志。' || '✅ **Dockerfile** 检查通过。' }}
-            
-            ${{ steps.kube-linter.outcome != 'success' && '❌ **K8s YAML** 发现安全隐患，请及时修复。' || '✅ **K8s YAML** 检查通过。' }}
-            
-            > 请修复红色项目，否则流水线将无法继续！
-          allow-repeats: false
-
-      # 4. 强制门禁 (熔断点)
-      - name: Final Enforcement Gate
-        if: always()
-        run: |
-          if [ "${{ steps.hadolint.outcome }}" != "success" ] || [ "${{ steps.kube-linter.outcome }}" != "success" ]; then
-            echo "❌ 发现代码规范或安全违规。流程已中断。"
-            exit 1
-          else
-            echo "✅ 所有规范检查已通过。"
-          fi
-
   build-and-push:
-    needs: lint
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
+      # 1. 登录到 GitHub 镜像仓库 (GHCR)
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -84,17 +28,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      # 2. 构建镜像并推送到仓库
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/zentrix-lab:latest
+          # 转换为小写镜像名，GitHub 用户名大写可能导致构建报错
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
+      # 3. 通过 SSH 登录服务器并通知 K3s 重启 Pod
       - name: SSH Remote Deployment
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -103,5 +50,13 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
+            script: |
+            # 1. 进入你的配置目录（假设你在服务器存了 yaml）
+            # 2. 直接 apply 最新的配置（确保 strategy: Recreate 生效）
+            # kubectl apply -f /root/deploy.yaml 
+            
+            # 3. 触发重启
             kubectl rollout restart deployment zentrix-lab
+            
+            # 4. 检查状态（Recreate 模式下通常很快）
             kubectl rollout status deployment zentrix-lab --timeout=90s

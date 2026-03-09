@@ -1,0 +1,62 @@
+name: Docker Build and Standard Deploy
+
+on:
+  push:
+    branches: [ "main" ]  # 只有 main 分支提交时触发
+  workflow_dispatch:      # 允许手动触发
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1. 登录到 GitHub 镜像仓库 (GHCR)
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 2. 构建镜像并推送到仓库
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          # 转换为小写镜像名，GitHub 用户名大写可能导致构建报错
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      # 3. 通过 SSH 登录服务器并通知 K3s 重启 Pod
+      - name: SSH Remote Deployment
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            script: |
+            # 1. 进入你的配置目录（假设你在服务器存了 yaml）
+            # 2. 直接 apply 最新的配置（确保 strategy: Recreate 生效）
+            # kubectl apply -f /root/deploy.yaml 
+            
+            # 3. 触发重启
+            kubectl rollout restart deployment zentrix-lab
+            
+            # 4. 检查状态（Recreate 模式下通常很快）
+            kubectl rollout status deployment zentrix-lab --timeout=90s

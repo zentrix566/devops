@@ -1,0 +1,107 @@
+name: "Zentrix Full CI/CD Pipeline"
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1. Dockerfile 审查 (Hadolint)
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        id: hadolint
+        with:
+          dockerfile: Dockerfile
+          format: tty
+        continue-on-error: true
+
+      # 2. Kubernetes YAML 审查 (Kube-linter)
+      - name: Scan Kubernetes YAML
+        uses: stackrox/kube-linter-action@v1.0.4
+        id: kube-linter
+        with:
+          # 扫描项目根目录下的所有 yaml 文件
+          directory: .
+          # 排除不需要检查的文件（可选）
+          # exclude-file-checks: "zentrix-lab.yaml" 
+        continue-on-error: true
+
+      # 3. 机器人自动评论 (针对 PR 场景)
+      - name: Post Comment to PR
+        if: always() && github.event_name == 'pull_request' && (steps.hadolint.outcome == 'failure' || steps.kube-linter.outcome == 'failure')
+        uses: mshick/add-pr-comment@v2
+        with:
+          message: |
+            ## 🤖 Zentrix 审查官报告
+            
+            ${{ steps.hadolint.outcome != 'success' && '❌ **Dockerfile** 发现规范问题，请查看日志。' || '✅ **Dockerfile** 检查通过。' }}
+            
+            ${{ steps.kube-linter.outcome != 'success' && '❌ **K8s YAML** 发现安全隐患，请及时修复。' || '✅ **K8s YAML** 检查通过。' }}
+            
+            > 请修复红色项目，否则流水线将无法继续！
+          allow-repeats: false
+
+      # 4. 强制门禁 (熔断点)
+      - name: Final Enforcement Gate
+        if: always()
+        run: |
+          if [ "${{ steps.hadolint.outcome }}" != "success" ] || [ "${{ steps.kube-linter.outcome }}" != "success" ]; then
+            echo "❌ 发现代码规范或安全违规。流程已中断。"
+            exit 1
+          else
+            echo "✅ 所有规范检查已通过。"
+          fi
+
+  build-and-push:
+    needs: lint
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/zentrix-lab:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH Remote Deployment
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            kubectl rollout restart deployment zentrix-lab
+            kubectl rollout status deployment zentrix-lab --timeout=90s
