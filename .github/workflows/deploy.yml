@@ -12,16 +12,10 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # ==========================================
-  # 阶段 1：Lint 门禁
-  # ==========================================
   lint:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
-    # 核心：定义 Job 级别的输出，确保状态可追踪
-    outputs:
-      lint_outcome: ${{ steps.hadolint.outcome }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -32,10 +26,12 @@ jobs:
         with:
           dockerfile: Dockerfile
           format: tty
-          no-fail: true # 为了让机器人能在报错后继续发言
+          # 关键改动：去掉 no-fail，由下方的 continue-on-error 接管
+        continue-on-error: true # 无论 Hadolint 报什么错，都强制继续执行后续步骤
 
       - name: Post Comment to PR
-        if: steps.hadolint.outcome != 'success' && github.event_name == 'pull_request'
+        # 仅在有错误且是 PR 时执行
+        if: steps.hadolint.outcome == 'failure' && github.event_name == 'pull_request'
         uses: mshick/add-pr-comment@v2
         with:
           message: |
@@ -44,28 +40,27 @@ jobs:
             ```text
             ${{ steps.hadolint.outputs.results }}
             ```
-            > ❌ 审查未通过，构建流水线已熔断。请修复后再提交！
+            > ❌ 审查未通过。
           allow-repeats: false
 
-      # 关键拦截逻辑：只要不是 success，直接强制退出
       - name: Final Enforcement Gate
-        # 关键修改：使用 always() 确保即使前面步骤失败，这一步也会执行检测
-        if: always() && steps.hadolint.outcome != 'success'
+        # 使用 always() 确保即使 checkout 挂了（虽然概率低）也会跑
+        if: always()
         run: |
-          echo "❌ 检测到代码规范问题，强制中断流水线。"
-          echo "Lint status is ${{ steps.hadolint.outcome }}. Failing job to block downstream tasks."
-          exit 1
+          # 显式判断上一步的状态
+          if [ "${{ steps.hadolint.outcome }}" != "success" ]; then
+            echo "❌ 发现 Dockerfile 规范违规。状态: ${{ steps.hadolint.outcome }}"
+            exit 1
+          else
+            echo "✅ 代码规范检查通过。"
+          fi
 
-  # ==========================================
-  # 阶段 2：Build & Push (只有 lint 真正成功才运行)
-  # ==========================================
   build-and-push:
     needs: lint
-    # 增加严格判断：只有 needs.lint 的结果确实是 success 且是 push/dispatch 才会跑
     if: |
-      always() && 
-      needs.lint.result == 'success' && 
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      github.event_name == 'push' || 
+      github.event_name == 'workflow_dispatch'
+    # 注意：不再在 build 任务里写 always()，因为我们需要它在 lint 失败时被跳过
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -73,7 +68,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+      
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -88,9 +83,6 @@ jobs:
           push: true
           tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/zentrix-lab:latest
 
-  # ==========================================
-  # 阶段 3：SSH Deploy
-  # ==========================================
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
