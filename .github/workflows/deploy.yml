@@ -46,7 +46,7 @@ jobs:
         uses: mshick/add-pr-comment@v2
         with:
           message: |
-            ## 🤖 Zentrix 审查官报告
+            ## 🤖 Zentrix 审查官报告-测试
             
             ${{ steps.hadolint.outcome != 'success' && '❌ **Dockerfile** 发现规范问题，请查看日志。' || '✅ **Dockerfile** 检查通过。' }}
             
