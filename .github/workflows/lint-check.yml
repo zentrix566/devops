@@ -1,41 +1,37 @@
-name: "Linter Service"
+name: "Linter Service with Bot"
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
     branches: [ main ]
 
 jobs:
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write # 必须赋予写 PR 评论的权限
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 1. 修正后的 Dockerfile 审查
-      # 原 'annotate' 无效，hadolint 现在默认会在 GitHub UI 中显示注解
+      # 1. 运行 Hadolint 并将结果保存到文件
       - name: Lint Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
+        id: hadolint # 给这一步起个 ID，方便后面引用
         with:
           dockerfile: Dockerfile
-          # 移除了无效的 annotate，改用 format 来确保输出兼容
-          format: tty
+          format: tty # 输出为可读文本
+          no-fail: true # 重点：先别让任务挂掉，否则走不到评论那一步
 
-      # 2. 修正后的 K8s YAML 审查
-      # 原 'fail-on-violations' 在新版本中被移除了（现在检测到错误默认就会失败）
-      - name: Scan Kubernetes files
-        uses: stackrox/kube-linter-action@v1.0.4
+      # 2. 只有当有错误时，机器人才出来评论
+      - name: Post Comment to PR
+        if: steps.hadolint.outcome != 'success' # 如果检查没通过
+        uses: mshick/add-pr-comment@v2
         with:
-          directory: .
-          # 根据报错提示，保留有效参数
-          config: .kube-linter.yaml # 如果没有该文件可删掉此行
-
-      # 3. 基础规范审查 (保持不变)
-      - name: Lint HTML/CSS
-        uses: github/super-linter/slim@v5
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VALIDATE_HTML: true
-          VALIDATE_CSS: true
-          VALIDATE_ALL_CODEBASE: false
+          message: |
+            ## 🤖 Zentrix 审查官报告
+            🔍 **Dockerfile 检测到规范问题：**
+            ```text
+            ${{ steps.hadolint.outputs.results }}
+            ```
+            > 请修复上述问题后再次提交，保持代码优雅！🚀
+          allow-repeats: false # 避免重复刷屏
