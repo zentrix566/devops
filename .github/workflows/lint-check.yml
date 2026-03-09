@@ -1,0 +1,40 @@
+name: "Linter Service"
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1. 审查 Dockerfile
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          # 结果会直接以 Comment 形式出现在 PR 中
+          annotate: true
+
+      # 2. 审查 K8s YAML
+      - name: Scan Kubernetes files
+        uses: stackrox/kube-linter-action@v1
+        with:
+          directory: .
+          # 如果不符合规范，Pipeline 会直接挂掉，不让你合并
+          fail-on-violations: true
+
+      # 3. 审查前端代码 (HTML/CSS)
+      - name: Lint HTML/CSS
+        uses: github/super-linter/slim@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VALIDATE_HTML: true
+          VALIDATE_CSS: true
+          # 只扫描有改动的文件，提高效率
+          VALIDATE_ALL_CODEBASE: false
