@@ -5,21 +5,20 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  workflow_dispatch:
+  workflow_dispatch: # 允许手动触发
 
 env:
   REGISTRY: ghcr.io
-  # 统一转换为小写，防止 GitHub 用户名大写导致 Docker 镜像名报错
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   # ==========================================
-  # 阶段 1：基础规范审查 (门禁)
+  # 阶段 1：Lint 门禁 (代码规范审查)
   # ==========================================
   lint:
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write
+      pull-requests: write # 赋予机器人评论权限
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -30,10 +29,10 @@ jobs:
         with:
           dockerfile: Dockerfile
           format: tty
-          no-fail: true 
+          no-fail: true # 关键：设置为 true 以确保后续能运行机器人评论步骤
 
       - name: Post Comment to PR
-        # 仅在 PR 且 lint 失败时评论
+        # 仅在 PR 且检测到错误时运行
         if: steps.hadolint.outcome != 'success' && github.event_name == 'pull_request'
         uses: mshick/add-pr-comment@v2
         with:
@@ -43,18 +42,22 @@ jobs:
             ```text
             ${{ steps.hadolint.outputs.results }}
             ```
-            > ❌ 审查未通过，请修复后再次提交，否则无法启动构建。
+            > ❌ 审查未通过，构建流程已拦截。请修复上述问题后重新提交！🚀
+          allow-repeats: false
 
-      - name: Check Lint Status
+      # 核心拦截器：无论 push 还是 PR，只要 lint 没过，就强制让任务失败
+      - name: Enforcement Gate
         if: steps.hadolint.outcome != 'success'
-        run: exit 1
+        run: |
+          echo "❌ Lint 检查未通过，正在终止流水线..."
+          exit 1 
 
   # ==========================================
-  # 阶段 2：构建与推送 (只有 Lint 通过才运行)
+  # 阶段 2：Build & Push (只有 Lint 成功才运行)
   # ==========================================
   build-and-push:
-    needs: lint
-    # 只有在主分支 push 或者手动触发时才进行构建
+    needs: lint # 建立任务依赖，lint 失败则此任务跳过
+    # 只有在 main 分支推送或手动触发时执行构建
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
@@ -72,16 +75,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          # 使用 lower case 转换镜像名
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          # 自动处理镜像名小写逻辑，防止大写用户名报错
+          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/zentrix-lab:latest
 
   # ==========================================
-  # 阶段 3：远程部署 (只有 Build 成功才运行)
+  # 阶段 3：SSH Deploy (只有 Build 成功才运行)
   # ==========================================
   deploy:
     needs: build-and-push
@@ -95,6 +98,8 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            # 重启服务，拉取最新镜像
+            echo "🚀 正在服务器执行更新..."
+            # 触发 K3s 集群中的 Deployment 重启
             kubectl rollout restart deployment zentrix-lab
+            # 等待滚动更新完成，设置 90 秒超时
             kubectl rollout status deployment zentrix-lab --timeout=90s
