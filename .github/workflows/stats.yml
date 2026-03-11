@@ -1,0 +1,28 @@
+name: Deployment Statistics
+
+on:
+  schedule:
+    - cron: '0 0 * * 1' # 每周一凌晨运行一次
+  workflow_dispatch:      # 允许你在界面上点击按钮手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run Stats Script
+        env:
+          # 使用 GitHub 自动提供的临时 Token，无需手动配置 Secret
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python ./scripts/deploy_frequency.py
