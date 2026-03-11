@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 # 配置信息
 TOKEN = os.getenv("GITHUB_TOKEN") 
 REPO = os.getenv("GITHUB_REPOSITORY") # Actions 自动提供当前仓库名
-WORKFLOW_NAME = "deploy.yml"  # 你的部署文件名
-DAYS = 30
+WORKFLOW_NAME = "Docker Build and Standard Deploy"  # 部署任务名称
+DAYS = 90
 
 
 def get_deploy_frequency():

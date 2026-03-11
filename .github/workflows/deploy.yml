@@ -1,8 +1,8 @@
 name: Docker Build and Standard Deploy
 
 on:
-  push:
-    branches: [ "main" ]  # 只有 main 分支提交时触发
+  # push:
+  #   branches: [ "main" ]  # 只有 main 分支提交时触发
   workflow_dispatch:      # 允许手动触发
 
 env:

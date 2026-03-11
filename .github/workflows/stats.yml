@@ -1,8 +1,8 @@
 name: Deployment Statistics
 
 on:
-  schedule:
-    - cron: '0 0 * * 1' # 每周一凌晨运行一次
+#   schedule:
+#     - cron: '0 0 * * 1' # 每周一凌晨运行一次
   workflow_dispatch:      # 允许你在界面上点击按钮手动触发
 
 jobs:
