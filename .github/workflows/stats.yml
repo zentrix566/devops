@@ -32,5 +32,5 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
-        run: python scripts/deploy_stats.py
+        run: python scripts/deploy_stats_1.py
         
