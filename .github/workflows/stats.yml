@@ -2,13 +2,13 @@ name: Deployment Statistics
 
 on:
   schedule:
-    - cron: '0 0 * * 1'
-  workflow_dispatch:
+    - cron: '0 0 * * 1' # 每周一凌晨
+  workflow_dispatch:      # 支持手动触发测试
 
 jobs:
-  build:
+  analyze-metrics:
     runs-on: ubuntu-latest
-    # 关键配置：授予写 Issue 的权限
+    # 必须明确授予的权限
     permissions:
       contents: read
       actions: read
@@ -28,6 +28,9 @@ jobs:
 
       - name: Run Stats Script
         env:
+          # 以下变量供 Python 脚本通过 os.getenv 读取
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python scripts/deploy_frequency.py
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+        run: python scripts/deploy_stats.py
+        
