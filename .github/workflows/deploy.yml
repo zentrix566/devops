@@ -1,7 +1,9 @@
 name: Docker Build and Standard Deploy
 
 on:
-  workflow_dispatch:      # 允许手动触发
+  push:
+    branches: [ "main" ]  # 只要 main 分支有提交就触发
+  workflow_dispatch:      # 同时保留手动触发按钮
 
 env:
   REGISTRY: ghcr.io
