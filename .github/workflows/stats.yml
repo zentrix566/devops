@@ -12,7 +12,7 @@ jobs:
     permissions:
       contents: read
       actions: read
-      issues: write 
+      issues: write
 
     steps:
       - name: Checkout code
@@ -28,9 +28,13 @@ jobs:
 
       - name: Run Stats Script
         env:
-          # 以下变量供 Python 脚本通过 os.getenv 读取
+          # GitHub 基础配置
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          
+          # 飞书应用配置（请在 GitHub Secrets 中配置这三项）
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_CHAT_ID: ${{ secrets.FEISHU_CHAT_ID }}
+          
         run: python scripts/deploy_stats.py
-        

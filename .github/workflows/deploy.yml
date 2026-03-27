@@ -1,12 +1,15 @@
 name: Docker Build and Standard Deploy
 
 on:
-  # push:
-  #   branches: [ "main" ]  # 只有 main 分支提交时触发
-  workflow_dispatch:      # 允许手动触发
+  push:
+    branches: [ "main" ]  # 只要 main 分支有提交就触发
+  workflow_dispatch:      # 同时保留手动触发按钮
 
 env:
   REGISTRY: ghcr.io
+  # 阿里云镜像地址 (请替换为你的实际命名空间)
+  ALIYUN_REGISTRY: crpi-nfo20s3jyve6dt2s.cn-beijing.personal.cr.aliyuncs.com
+  ALIYUN_REPO: zentrix-repo/devops
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
@@ -28,20 +31,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 2. 构建镜像并推送到仓库
+      # 2. 登录到 阿里云镜像服务 (ACR)
+      - name: Log in to Aliyun ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ALIYUN_REGISTRY }}
+          # 在 GitHub Settings -> Secrets -> Actions 中配置以下三个变量
+          username: ${{ secrets.ALIYUN_USERNAME }}
+          password: ${{ secrets.ALIYUN_PASSWORD }}
+
+      # 3. 构建镜像并同时推送到两个仓库
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          # 转换为小写镜像名，GitHub 用户名大写可能导致构建报错
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          # 同时指定两个仓库的标签
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.ALIYUN_REGISTRY }}/${{ env.ALIYUN_REPO }}:latest
 
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      # 3. 通过 SSH 登录服务器并通知 K3s 重启 Pod
+      # 4. 通过 SSH 登录服务器并通知 K3s 重启 Pod
       - name: SSH Remote Deployment
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -50,7 +64,7 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |            
-            # 1. 触发重启
+            # 1. 触发重启 (确保服务器已经配置了拉取阿里云镜像的凭证)
             kubectl rollout restart deployment zentrix-lab
             
             # 2. 检查状态
