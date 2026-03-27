@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zentrix-lab
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: zentrix
+  template:
+    metadata:
+      labels:
+        app: zentrix
+    spec:
+      imagePullSecrets:
+        - name: aliyun-registry-secret  # 确保您已创建此 Secret
+      containers:
+      - name: lab-container
+        # 使用您 describe 中确认的阿里云镜像地址
+        image: crpi-nfo20s3jyve6dt2s.cn-beijing.personal.cr.aliyuncs.com/zentrix-repo/devops:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+          # 注意：删除了 hostPort: 80，改由下方的 Service 处理端口映射
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zentrix-service
+spec:
+  type: NodePort  # 关键点：使用 NodePort 模式
+  selector:
+    app: zentrix
+  ports:
+    - port: 80          # Service 集群内访问端口
+      targetPort: 80    # 容器监听端口
+      nodePort: 30080   # 宿主机物理端口：您可以直接通过 IP:30080 访问
+---
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: zentrix-main-ingress
+spec:
+  ingressClassName: nginx  # 关键：显式指定 Class
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: zentrix-service
+            port:
+              number: 80
